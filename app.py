@@ -1,252 +1,80 @@
 import streamlit as st
-import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
 
-# ===== SESSION STATE ===== #
-if 'pink_zones' not in st.session_state:
-    st.session_state.pink_zones = {'multipliers': [], 'indices': []}
-if 'momentum_line' not in st.session_state:
-    st.session_state.momentum_line = [0]
-if 'rounds' not in st.session_state:
+st.set_page_config(page_title="Momentum Tracker v2", layout="wide")
+
+st.title("Momentum Tracker App v2: MSI + Sniper + RTT")
+
+# Session states for data
+if "rounds" not in st.session_state:
     st.session_state.rounds = []
-if 'danger_zones' not in st.session_state:
-    st.session_state.danger_zones = []
-if 'consecutive_blues' not in st.session_state:
-    st.session_state.consecutive_blues = 0
-if 'last_pink_index' not in st.session_state:
-    st.session_state.last_pink_index = -1
-if 'entropy_warnings' not in st.session_state:
-    st.session_state.entropy_warnings = []
-if 'current_pattern' not in st.session_state:
-    st.session_state.current_pattern = 'NEUTRAL'
 
-# ===== CORE ENGINE ===== #
-def score_round(multiplier):
-    """Precision scoring without rounding"""
-    if multiplier < 1.5: return -1.5
-    return np.interp(multiplier,
-                   [1.5, 2.0, 5.0, 10.0, 20.0],
-                   [-1.0, 1.0, 1.5, 2.0, 3.0])
+# MSI Config
+WINDOW_SIZE = st.sidebar.slider("MSI Window Size", 10, 100, 20)
+PINK_THRESHOLD = st.sidebar.number_input("Pink Threshold (default = 10.0x)", value=10.0)
+STRICT_RTT = st.sidebar.checkbox("Strict RTT Mode", value=True)
 
-def entropy_collapse_detected():
-    """Quantum-enhanced entropy collapse detection"""
-    if len(st.session_state.rounds) < 8: return False
-    recent = st.session_state.rounds[-8:]
-    blues = [r for r in recent if r < 2.0]
-    if len(blues) >= 5: return True
-    if len(blues) >=3:
-        trend = np.polyfit(range(len(blues)), [1 if r <2 else 0 for r in blues], 1)[0]
-        return trend > 0.25
-    return False
+# Manual input
+st.subheader("Manual Round Entry")
+multiplier = st.number_input("Enter multiplier", min_value=0.01, step=0.01)
+if st.button("Add Round"):
+    st.session_state.rounds.append({
+        "timestamp": datetime.now(),
+        "multiplier": multiplier,
+        "score": 2 if multiplier >= PINK_THRESHOLD else (1 if multiplier >= 2 else -1)
+    })
 
-def enhanced_fib_trap():
-    """Dual-spectrum Fibonacci trap detection"""
-    if len(st.session_state.rounds) >=5:
-        recent_5 = st.session_state.rounds[-5:]
-        if sum(r <2.0 for r in recent_5) >=4: return True
-    if len(st.session_state.rounds) >=10:
-        window = st.session_state.rounds[-10:]
-        blues = [i for i,r in enumerate(window) if r <2.0]
-        return len(blues)>=4 and np.mean(blues) >6
-    return False
+# Convert to DataFrame
+df = pd.DataFrame(st.session_state.rounds)
+if not df.empty:
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df["msi"] = df["score"].rolling(WINDOW_SIZE).sum()
+    df["type"] = df["multiplier"].apply(lambda x: "Pink" if x >= PINK_THRESHOLD else ("Purple" if x >= 2 else "Blue"))
 
-# ===== DYNAMIC SYSTEMS ===== #  
-def stop_loss_alert():  # Renamed from stop_loss_triggered
-    """Warning system instead of hard stop"""
-    alerts = []
-    if st.session_state.consecutive_blues >=3:
-        alerts.append(f"🚨 3+ CONSECUTIVE BLUES (Current: {st.session_state.consecutive_blues})")
-    if (len(st.session_state.rounds) - st.session_state.last_pink_index) >15:
-        alerts.append("🚨 15+ ROUNDS SINCE LAST PINK ZONE")
-    return alerts
+    st.subheader("Round Log")
+    st.dataframe(df.tail(30), use_container_width=True)
 
-# ===== PATTERN WARFARE ADDITIONS ===== #  
-def classify_pattern():  
-    patterns = {  
-        'STABLE_FLOW': is_stable_flow(),  
-        'LUCRATIVE_BURST': is_lucrative_burst(),  
-        'RED_EXTENSION': is_red_extension(),  
-        'HOUSE_TRAP': detect_house_trap()  
-    }  
-    return max(patterns, key=patterns.get) if any(patterns.values()) else 'NEUTRAL'
+    # Plot MSI
+    fig, ax = plt.subplots(figsize=(10, 3))
+    ax.plot(df["timestamp"], df["msi"], label="MSI", color="black")
+    ax.axhline(0, color="gray", linestyle="--")
+    ax.fill_between(df["timestamp"], df["msi"], where=(df["msi"] >= 6), color="pink", alpha=0.3, label="Burst Zone")
+    ax.fill_between(df["timestamp"], df["msi"], where=(df["msi"] <= -6), color="red", alpha=0.2, label="Red Zone")
+    ax.fill_between(df["timestamp"], df["msi"], where=((df["msi"] > 0) & (df["msi"] < 6)), color="purple", alpha=0.1, label="Surge Zone")
+    ax.legend()
+    ax.set_title("Momentum Score Index (MSI)")
+    st.pyplot(fig)
 
-def is_stable_flow():
-    pinks = st.session_state.pink_zones['indices']
-    if len(pinks) <2: return False
-    last_pink = pinks[-1]
-    prev_pink = pinks[-2]
-    interval = last_pink - prev_pink
-    purples = sum(2<=r<10 for r in st.session_state.rounds[prev_pink:last_pink])
-    return (interval <=10) and (purples >=3)
+    # Sniper Logic
+    st.subheader("Sniper Pink Projections")
+    df["projected_by"] = None
+    projections = []
+    for i, row in df.iterrows():
+        if row["type"] == "Pink":
+            for j, prior in df.iloc[:i].iterrows():
+                diff = (row["timestamp"] - prior["timestamp"]).total_seconds() / 60
+                if prior["type"] == "Pink":
+                    if 8 <= diff <= 12 or 18 <= diff <= 22:
+                        df.at[i, "projected_by"] = prior["timestamp"].strftime("%H:%M:%S")
+                        projections.append((prior["timestamp"], row["timestamp"]))
 
-def is_lucrative_burst():  
-    pinks = st.session_state.pink_zones['indices']  
-    return (len(pinks) >=2 and  
-            (pinks[-1] - pinks[-2] <=5) and  
-            all(r >=2.0 for r in st.session_state.rounds[pinks[-2]+1:pinks[-1]]))  
+    st.write(df[df["type"] == "Pink"].tail(20)[["timestamp", "multiplier", "projected_by"]])
 
-def is_red_extension():  
-    last_pink = st.session_state.last_pink_index  
-    if last_pink == -1: return False  
-    post_pink = st.session_state.rounds[last_pink+1:]  
-    return (sum(r <2.0 for r in post_pink[:8]) >=6 and  
-           any(2.0 <= r <3.0 for r in post_pink[8:12]))
+    # Entry Recommendation
+    latest_msi = df["msi"].iloc[-1]
+    latest_type = df["type"].iloc[-1]
+    st.subheader("Entry Decision Assistant")
+    if latest_msi >= 6:
+        st.success("PINK Entry Zone")
+    elif 3 <= latest_msi < 6:
+        st.info("PURPLE Entry Zone")
+    elif latest_msi <= -3:
+        st.warning("Pullback Zone - Avoid Entry")
+    else:
+        st.info("Neutral Zone - Wait")
 
-def detect_house_trap():
-    last_pink = st.session_state.last_pink_index
-    if last_pink == -1: return False
-    post_pink = st.session_state.rounds[last_pink+1:]
-    blues = sum(r <2.0 for r in post_pink[:5])
-    fake_purple = any(2<=r<2.5 for r in post_pink[5:8])
-    return blues >=4 and fake_purple
-
-def tactical_stake():  
-    pattern = st.session_state.current_pattern  
-    base = {  
-        'STABLE_FLOW': 0.035,  
-        'LUCRATIVE_BURST': 0.05,  
-        'RED_EXTENSION': 0.0075,  
-        'HOUSE_TRAP': 0.0,  
-        'NEUTRAL': 0.02  
-    }[pattern]  
-    if st.session_state.entropy_warnings: base *= 0.4  
-    return min(base, 0.05)
-
-def execute_countermeasures():  
-    if st.session_state.current_pattern == 'HOUSE_TRAP':  
-        st.session_state.danger_zones.append(len(st.session_state.rounds))  
-        st.session_state.entropy_warnings.append(len(st.session_state.rounds))  
-        return False 
-    return True
-
-# ===== TACTICAL VISUALS ===== #
-def create_tactical_chart():
-    plt.style.use('dark_background')
-    fig, ax = plt.subplots(figsize=(12,6))
-
-
-
-    
-    # Core momentum line
-    momentum = pd.Series(st.session_state.momentum_line)
-    ax.plot(momentum.ewm(alpha=0.75).mean(),
-            color='#00fffa', lw=2, marker='o',
-            markersize=8, markerfacecolor='white')
-
-    # Pink reaction zones
-    for mult, idx in zip(st.session_state.pink_zones['multipliers'],
-                        st.session_state.pink_zones['indices']):
-        ax.fill_betweenx(y=[mult*0.95, mult*1.05],
-                        x1=0, x2=len(momentum)-1,
-                        color='#4a148c', alpha=0.08)
-        ax.axvline(idx, color='#ff00ff', linestyle=':', alpha=0.4)
-
-    # Pattern highlights
-    current_round = len(st.session_state.rounds)-1
-    color_map = {  
-        'STABLE_FLOW': '#00ff00',  
-        'LUCRATIVE_BURST': '#00ff9d',  
-        'RED_EXTENSION': '#ff9100',  
-        'HOUSE_TRAP': '#ff0000'  
-    }  
-    ax.axvspan(current_round-0.5, current_round+0.5,  
-              facecolor=color_map.get(st.session_state.current_pattern, '#000000'), 
-              alpha=0.15, zorder=0)
-
-    # Danger visualization
-    for zone in st.session_state.danger_zones:
-        ax.axvspan(zone-0.5, zone+0.5, color='#d50000', alpha=0.15)
-    for warning in st.session_state.entropy_warnings:
-        ax.axvline(warning, color='#ff9100', alpha=0.3)
-
-    for i, alert in enumerate(st.session_state.danger_zones):
-        ax.axvline(alert, color='#ff0000' if i%2==0 else '#ff9100', 
-                  alpha=0.4, linestyle='--', lw=1)
-        
-
-    ax.set_title("CYA PATTERN WARFARE v7.0", color='#00fffa', fontsize=18)
-    ax.set_facecolor('#000000')
-    return fig
-
-
-# ===== INTERFACE ===== #
-st.set_page_config(page_title="CYA Tactical", layout="wide")
-st.title("🔥 CYA PATTERN WARFARE")
-
-# Input panel
-with st.container():
-    col1, col2 = st.columns([3,1])
-    with col1:
-        mult = st.number_input("ENTER MULTIPLIER", 1.0, 1000.0, 1.0, 0.1)
-    with col2:
-        if st.button("🚀 ANALYZE", type="primary"):
-            # Core updates
-            st.session_state.rounds.append(mult)
-            new_score = st.session_state.momentum_line[-1] + score_round(mult)
-            st.session_state.momentum_line.append(new_score)
-            
-            # Process round normally
-    
-            # Track blues
-            if mult < 2.0:
-                st.session_state.consecutive_blues +=1
-            else:
-                st.session_state.consecutive_blues =0
-            
-            # Track pinks
-            if mult >=10.0:
-                st.session_state.pink_zones['multipliers'].append(mult)
-                st.session_state.pink_zones['indices'].append(len(st.session_state.rounds)-1)
-                st.session_state.last_pink_index = len(st.session_state.rounds)-1
-            
-            # Pattern warfare execution
-            st.session_state.current_pattern = classify_pattern()
-            if not execute_countermeasures():
-                st.error("🚫 HOUSE TRAP ACTIVE - BETTING BLOCKED")
-                st.session_state.consecutive_blues = 0
-            
-            # Danger detection
-            if enhanced_fib_trap() or entropy_collapse_detected():
-                st.session_state.danger_zones.append(len(st.session_state.rounds)-1)
-            if entropy_collapse_detected():
-                st.session_state.entropy_warnings.append(len(st.session_state.rounds)-1)
-
-            alerts = stop_loss_alert()
-            if alerts:
-                st.session_state.danger_zones.append(len(st.session_state.rounds)-1)
-                with st.chat_message("assistant", avatar="⚠️"):
-                    st.markdown("**QUANTUM ALERTS:**")
-                    for alert in alerts:
-                        st.write(alert)
-                    st.progress(0.95, text="95% RISK PROBABILITY")
-
-        if st.button("🔄 FULL RESET", type="secondary"):
-            st.session_state.clear()
-            st.rerun()
-
-# Main display
-st.pyplot(create_tactical_chart())
-
-# Status HUD
-with st.container():
-    cols = st.columns(5)
-    cols[0].metric("TOTAL ROUNDS", len(st.session_state.rounds))
-    cols[1].metric("PINK SIGNALS", len(st.session_state.pink_zones['multipliers']))
-    cols[2].metric("CURRENT STAKE", f"{tactical_stake()*100:.1f}%")
-    cols[3].progress(
-        min(100, len(st.session_state.danger_zones)*15),
-        text=f"DANGER LEVEL: {len(st.session_state.danger_zones)*15}%"
-    )
-    cols[4].metric("ACTIVE PATTERN", st.session_state.current_pattern)
-
-# Alert system
-if st.session_state.entropy_warnings:
-    st.error(f"⚡ ENTROPY COLLAPSE DETECTED ({len(st.session_state.entropy_warnings)} warnings)")
-alerts = stop_loss_alert()
-if alerts:
-    st.warning("⚠️ RISK THRESHOLD BREACHED - DEFENSIVE MEASURES ACTIVE")
-    for alert in alerts:
-        st.toast(alert, icon="⚠️")
-elif st.session_state.danger_zones:
-    st.warning(f"⚠️ FIBONACCI TRAP ZONES ({len(st.session_state.danger_zones)})")
+else:
+    st.info("Enter rounds to begin analysis.")
