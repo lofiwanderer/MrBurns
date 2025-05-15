@@ -58,7 +58,7 @@ st.markdown("""
 [data-testid="stToolbar"] { right: 2rem; }
 [data-testid="stMetric"] { background: #000033; border-radius: 10px; }
 .st-bq { color: #00f7ff !important; }
-.st-cb { background-color: #00f7ff !important; }
+.st-cb { background-color: #000033 !important; }
 </style>
 """, unsafe_allow_html=True)
 
