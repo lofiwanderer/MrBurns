@@ -4,6 +4,10 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime
 
+# ===== PERFORMANCE OPTIMIZATIONS =====
+np.seterr(divide='ignore', invalid='ignore')  # Disable Numpy warnings
+pd.options.mode.chained_assignment = None  # Disable Pandas SettingWithCopyWarning
+
 # ============== AI AGENTS ==============
 class PatternDetector:
     def detect(self, msi_values):
